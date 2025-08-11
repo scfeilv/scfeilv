@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>保险产品费率查询系统（多人版）</title>
+    <!-- 外部资源 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.1.0/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.1.0/js/select2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-storage.js"></script>
+    
+    <script>
+        // 初始化Firebase（请替换为你的Firebase配置）
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "your-project-id.firebaseapp.com",
+            databaseURL: "https://your-project-id-default-rtdb.firebaseio.com",
+            projectId: "your-project-id",
+            storageBucket: "your-project-id.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        
+        // 初始化Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        const storage = firebase.storage();
+        
+        // 全局数据
+        let productsData = {};
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- 顶部导航 -->
+    <header class="bg-white shadow-sm sticky top-0 z-10">
+        <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <i class="fas fa-shield-alt text-blue-600 text-2xl"></i>
+                <h1 class="text-xl font-bold text-gray-800">保险费率查询（多人版）</h1>
+            </div>
+            <div class="text-sm text-gray-500 flex items-center">
+                <span id="lastUpdateTime" class="mr-3">最后更新: 从未</span>
+                <button id="updateDataBtn" class="text-blue-600 hover:text-blue-800 transition-colors">
+                    <i class="fas fa-upload mr-1"></i>更新数据
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 数据更新模态框 -->
+    <div id="updateModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-md mx-4 transform transition-all">
+            <div class="p-5 border-b border-gray-200">
+                <h3 class="text-lg font-semibold text-gray-900">更新费率数据</h3>
+            </div>
+            <div class="p-5">
+                <p class="text-sm text-gray-600 mb-4">
+                    上传Excel文件更新费率数据，文件需包含以下列：
+                    <span class="block mt-2 text-xs text-gray-500">保险公司,产品名称,产品代码,缴费期,FYC,新单开拓奖,新单收入合计,第2年佣金,第3年佣金,第4年佣金,第5年佣金</span>
+                </p>
+                
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                    <i class="fas fa-file-excel text-green-500 text-4xl mb-3"></i>
+                    <p class="text-sm text-gray-500 mb-2">拖放Excel文件到此处，或</p>
+                    <label class="inline-block bg-blue-600 text-white text-sm px-4 py-2 rounded-md hover:bg-blue-700 cursor-pointer transition-colors">
+                        选择文件
+                        <input type="file" id="excelFile" accept=".xlsx,.xls" class="hidden">
+                    </label>
+                </div>
+                
+                <div id="fileInfo" class="mt-3 hidden">
+                    <div class="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                        <span id="fileName" class="text-sm text-gray-700 truncate"></span>
+                        <button id="removeFile" class="text-gray-400 hover:text-gray-600">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 bg-gray-50 rounded-b-lg flex justify-end space-x-3">
+                <button id="cancelUpdate" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                    取消
+                </button>
+                <button id="confirmUpdate" class="px-4 py-2 bg-blue-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-blue-700 transition-colors">
+                    确认更新
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 成功提示 -->
+    <div id="successToast" class="fixed bottom-5 right-5 bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center">
+        <i class="fas fa-check-circle mr-2"></i>
+        <span>数据更新成功！</span>
+    </div>
+
+    <!-- 主要内容 -->
+    <main class="container mx-auto px-4 py-6">
+        <!-- 查询条件 -->
+        <section class="bg-white rounded-lg shadow-sm p-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                <i class="fas fa-search text-blue-600 mr-2"></i>
+                查询条件
+            </h2>
+            
+            <div class="space-y-4">
+                <!-- 保险公司选择 -->
+                <div>
+                    <label for="company" class="block text-sm font-medium text-gray-700 mb-1">
+                        <i class="fas fa-building text-gray-500 mr-1"></i>
+                        保险公司
+                    </label>
+                    <select id="company" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200">
+                        <option value="">请选择保险公司</option>
+                    </select>
+                </div>
+                
+                <!-- 产品名称选择 -->
+                <div>
+                    <label for="product" class="block text-sm font-medium text-gray-700 mb-1">
+                        <i class="fas fa-tag text-gray-500 mr-1"></i>
+                        产品名称（下拉选择+模糊查询）
+                    </label>
+                    <select id="product" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200">
+                        <option value="">请选择或搜索产品名称</option>
+                    </select>
+                </div>
+                
+                <!-- 查询按钮 -->
+                <button id="searchBtn" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 flex items-center justify-center">
+                    <i class="fas fa-search mr-2"></i>
+                    立即查询
+                </button>
+            </div>
+        </section>
+
+        <!-- 搜索结果 -->
+        <section id="resultsSection" class="hidden">
+            <!-- 产品信息 -->
+            <div class="bg-white rounded-lg shadow-sm p-4 mb-6">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h2 id="productTitle" class="text-lg font-bold text-gray-800"></h2>
+                        <p id="productCode" class="text-sm text-gray-500"></p>
+                    </div>
+                    <div class="text-right">
+                        <p id="companyName" class="text-sm font-medium text-blue-600"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 费率表格 -->
+            <div class="bg-white rounded-lg shadow-sm p-4 mb-6 overflow-x-auto">
+                <h3 class="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                    <i class="fas fa-table text-green-600 mr-2"></i>
+                    各缴费期费率详情
+                </h3>
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">缴费期</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">首期佣金(FYC)</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">新单开拓奖(FYD)</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">新单收入合计</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rateTableBody" class="bg-white divide-y divide-gray-200">
+                        <!-- 表格内容将通过JavaScript动态生成 -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 后续年度佣金表格 -->
+            <div class="bg-white rounded-lg shadow-sm p-4 mb-6 overflow-x-auto">
+                <h3 class="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                    <i class="fas fa-chart-line text-purple-600 mr-2"></i>
+                    后续年度佣金详情
+                </h3>
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">缴费期</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">第2年佣金</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">第3年佣金</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">第4年佣金</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">第5年佣金</th>
+                        </tr>
+                    </thead>
+                    <tbody id="yearlyTableBody" class="bg-white divide-y divide-gray-200">
+                        <!-- 表格内容将通过JavaScript动态生成 -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 费率趋势图 -->
+            <div class="bg-white rounded-lg shadow-sm p-4 mb-6">
+                <h3 class="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                    <i class="fas fa-chart-bar text-orange-600 mr-2"></i>
+                    费率趋势分析
+                </h3>
+                <div class="h-64">
+                    <canvas id="rateChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- 产品列表展示 -->
+        <section id="sampleDataSection" class="mb-6">
+            <div class="bg-white rounded-lg shadow-sm p-4">
+                <h2 class="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+                    <i class="fas fa-database text-indigo-600 mr-2"></i>
+                    产品列表
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 text-xs">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-2 py-1 text-left font-medium text-gray-500 uppercase tracking-wider">保险公司</th>
+                                <th class="px-2 py-1 text-left font-medium text-gray-500 uppercase tracking-wider">产品名称</th>
+                                <th class="px-2 py-1 text-left font-medium text-gray-500 uppercase tracking-wider">缴费期选项</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sampleTableBody" class="bg-white divide-y divide-gray-200">
+                            <!-- 表格内容将通过JavaScript动态生成 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- 无结果提示 -->
+        <section id="noResultSection" class="hidden">
+            <div class="bg-white rounded-lg shadow-sm p-6 text-center">
+                <i class="fas fa-search text-gray-300 text-5xl mb-3"></i>
+                <h3 class="text-lg font-semibold text-gray-800 mb-1">未找到匹配的产品</h3>
+                <p class="text-gray-500">请尝试调整搜索条件后重新查询</p>
+            </div>
+        </section>
+
+        <!-- 加载提示 -->
+        <section id="loadingSection" class="hidden">
+            <div class="bg-white rounded-lg shadow-sm p-6 text-center">
+                <i class="fas fa-spinner fa-spin text-blue-500 text-5xl mb-3"></i>
+                <h3 class="text-lg font-semibold text-gray-800">加载中...</h3>
+                <p class="text-gray-500">正在获取最新费率数据</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-white border-t border-gray-200 py-4 mt-8">
+        <div class="container mx-auto px-4 text-center text-sm text-gray-500">
+            <p>© 2025 保险费率查询系统（多人共享版）</p>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script>
+        // 初始化页面
+        document.addEventListener('DOMContentLoaded', function() {
+            // 显示加载状态
+            document.getElementById('loadingSection').classList.remove('hidden');
+            document.getElementById('sampleDataSection').classList.add('hidden');
+            
+            // 从云端加载数据
+            loadDataFromCloud();
+            
+            // 绑定事件
+            bindEvents();
+        });
+        
+        // 从云端加载数据
+        function loadDataFromCloud() {
+            // 读取数据库中的产品数据
+            database.ref('products').once('value')
+                .then(snapshot => {
+                    const data = snapshot.val();
+                    if (data) {
+                        productsData = data;
+                        // 更新最后更新时间
+                        database.ref('lastUpdateTime').once('value')
+                            .then(timeSnapshot => {
+                                const updateTime = timeSnapshot.val() || '未知';
+                                document.getElementById('lastUpdateTime').textContent = `最后更新: ${updateTime}`;
+                            });
+                    }
+                    // 初始化界面
+                    initSelects();
+                    showAllProducts();
+                    // 隐藏加载状态
+                    document.getElementById('loadingSection').classList.add('hidden');
+                    document.getElementById('sampleDataSection').classList.remove('hidden');
+                })
+                .catch(error => {
+                    console.error('加载数据失败:', error);
+                    alert('加载数据失败，请刷新页面重试');
+                    document.getElementById('loadingSection').classList.add('hidden');
+                });
+        }
+        
+        // 保存数据到云端
+        function saveDataToCloud() {
+            return new Promise((resolve, reject) => {
+                // 保存产品数据
+                database.ref('products').set(productsData)
+                    .then(() => {
+                        // 记录更新时间
+                        const now = new Date();
+                        const updateTime = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+                        return database.ref('lastUpdateTime').set(updateTime);
+                    })
+                    .then(() => {
+                        document.getElementById('lastUpdateTime').textContent = `最后更新: ${updateTime}`;
+                        resolve();
+                    })
+                    .catch(error => {
+                        console.error('保存数据失败:', error);
+                        reject(error);
+                    });
+            });
+        }
+        
+        // 上传Excel文件到云端备份
+        function uploadExcelToCloud(file) {
+            return new Promise((resolve, reject) => {
+                const timestamp = new Date().getTime();
+                const fileName = `rate_data_${timestamp}.xlsx`;
+                const storageRef = storage.ref(`excel_backups/${fileName}`);
+                
+                storageRef.put(file)
+                    .then(snapshot => {
+                        console.log('文件上传成功');
+                        resolve();
+                    })
+                    .catch(error => {
+                        console.error('文件上传失败:', error);
+                        reject(error);
+                    });
+            });
+        }
+        
+        // 初始化下拉框
+        function initSelects() {
+            // 获取所有保险公司列表
+            const companies = Object.keys(productsData).sort();
+            
+            // 填充保险公司下拉框
+            const companySelect = document.getElementById('company');
+            companySelect.innerHTML = '<option value="">请选择保险公司</option>';
+            companies.forEach(company => {
+                const option = document.createElement('option');
+                option.value = company;
+                option.textContent = company;
+                companySelect.appendChild(option);
+            });
+            
+            // 初始化Select2插件
+            $('#company').select2({
+                placeholder: "请选择保险公司",
+                allowClear: true,
+                width: '100%',
+                dropdownAutoWidth: true,
+                theme: 'classic'
+            });
+            
+            // 初始不填充产品下拉框，等待选择保险公司后再填充
+            $('#product').select2({
+                placeholder: "请先选择保险公司",
+                allowClear: true,
+                width: '100%',
+                dropdownAutoWidth: true,
+                theme: 'classic'
+            });
+            
+            // 保险公司选择变化时，更新产品下拉框
+            $('#company').on('change', function() {
+                const selectedCompany = $(this).val();
+                updateProductSelect(selectedCompany);
+            });
+        }
+        
+        // 更新产品下拉框
+        function updateProductSelect(company) {
+            const productSelect = $('#product');
+            productSelect.empty();
+            
+            if (!company || !productsData[company]) {
+                productSelect.append($('<option>', {
+                    value: "",
+                    text: "请先选择保险公司"
+                }));
+                productSelect.select2({
+                    placeholder: "请先选择保险公司",
+                    allowClear: true
+                });
+                return;
+            }
+            
+            // 获取该公司的所有产品（去重）
+            const products = {};
+            productsData[company].forEach(item => {
+                products[item.product_name] = item.product_code;
+            });
+            
+            // 添加产品选项
+            productSelect.append($('<option>', {
+                value: "",
+                text: "请选择产品名称"
+            }));
+            
+            Object.keys(products).sort().forEach(productName => {
+                productSelect.append($('<option>', {
+                    value: productName,
+                    text: productName
+                }));
+            });
+            
+            // 重新初始化Select2
+            productSelect.select2({
+                placeholder: "请选择或搜索产品名称",
+                allowClear: true
+            });
+        }
+        
+        // 绑定事件
+        function bindEvents() {
+            // 查询按钮点击事件
+            document.getElementById('searchBtn').addEventListener('click', performSearch);
+            
+            // 更新数据按钮点击事件
+            document.getElementById('updateDataBtn').addEventListener('click', () => {
+                document.getElementById('updateModal').classList.remove('hidden');
+            });
+            
+            // 取消更新按钮点击事件
+            document.getElementById('cancelUpdate').addEventListener('click', () => {
+                document.getElementById('updateModal').classList.add('hidden');
+                resetFileInput();
+            });
+            
+            // 确认更新按钮点击事件
+            document.getElementById('confirmUpdate').addEventListener('click', importExcelData);
+            
+            // 文件选择事件
+            document.getElementById('excelFile').addEventListener('change', handleFileSelect);
+            
+            // 移除文件按钮点击事件
+            document.getElementById('removeFile').addEventListener('click', resetFileInput);
+            
+            // 拖放文件事件
+            const dropArea = document.querySelector('#updateModal .border-dashed');
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropArea.addEventListener(eventName, highlight, false);
+            });
+            
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, unhighlight, false);
+            });
+            
+            function highlight() {
+                dropArea.classList.add('border-blue-500', 'bg-blue-50');
+            }
+            
+            function unhighlight() {
+                dropArea.classList.remove('border-blue-500', 'bg-blue-50');
+            }
+            
+            dropArea.addEventListener('drop', handleDrop, false);
+            
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                
+                if (files.length) {
+                    handleFiles(files);
+                }
+            }
+        }
+        
+        // 处理文件选择
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length) {
+                handleFiles(files);
+            }
+        }
+        
+        // 处理文件
+        function handleFiles(files) {
+            const file = files[0];
+            if (file.type.includes('excel') || file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('fileInfo').classList.remove('hidden');
+                // 保存文件引用
+                document.getElementById('excelFile').files = files;
+            } else {
+                alert('请选择Excel文件（.xlsx或.xls格式）');
+                resetFileInput();
+            }
+        }
+        
+        // 重置文件输入
+        function resetFileInput() {
+            document.getElementById('excelFile').value = '';
+            document.getElementById('fileInfo').classList.add('hidden');
+            document.getElementById('fileName').textContent = '';
+        }
+        
+        // 导入Excel数据
+        function importExcelData() {
+            const fileInput = document.getElementById('excelFile');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('请先选择Excel文件');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    // 获取第一个工作表
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // 转换为JSON
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    
+                    // 验证数据格式
+                    if (!validateExcelData(jsonData)) {
+                        alert('Excel文件格式不正确，请检查列名是否符合要求');
+                        return;
+                    }
+                    
+                    // 转换数据格式并更新
+                    convertAndUpdateData(jsonData);
+                    
+                    // 上传Excel文件到云端备份
+                    uploadExcelToCloud(file)
+                        .then(() => {
+                            // 保存数据到云端
+                            return saveDataToCloud();
+                        })
+                        .then(() => {
+                            // 关闭模态框并重置
+                            document.getElementById('updateModal').classList.add('hidden');
+                            resetFileInput();
+                            
+                            // 显示成功提示
+                            showSuccessToast();
+                            
+                            // 重新初始化界面
+                            reinitializeUI();
+                        })
+                        .catch(error => {
+                            alert('更新数据失败: ' + error.message);
+                        });
+                    
+                } catch (error) {
+                    console.error('导入Excel失败:', error);
+                    alert('导入数据失败，请检查文件格式是否正确');
+                }
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        // 验证Excel数据格式
+        function validateExcelData(data) {
+            if (!data || data.length === 0) return false;
+            
+            // 检查是否包含必要的列
+            const requiredColumns = ['保险公司', '产品名称', '缴费期', 'FYC', '新单开拓奖', '新单收入合计'];
+            const firstRow = data[0];
+            
+            return requiredColumns.every(column => {
+                return firstRow.hasOwnProperty(column);
+            });
+        }
+        
+        // 转换并更新数据
+        function convertAndUpdateData(excelData) {
+            const newProductsData = {};
+            
+            excelData.forEach(row => {
+                const company = row['保险公司'];
+                const productName = row['产品名称'];
+                
+                // 如果公司不存在，创建公司条目
+                if (!newProductsData[company]) {
+                    newProductsData[company] = [];
+                }
+                
+                // 添加产品数据
+                newProductsData[company].push({
+                    company: company,
+                    product_name: productName,
+                    product_code: row['产品代码'] || '',
+                    payment_term: row['缴费期'] + '', // 确保是字符串
+                    fyc: parseFloat(row['FYC']) || 0,
+                    fyd: parseFloat(row['新单开拓奖']) || 0,
+                    total_new: parseFloat(row['新单收入合计']) || 0,
+                    year2: parseFloat(row['第2年佣金']) || 0,
+                    year3: parseFloat(row['第3年佣金']) || 0,
+                    year4: parseFloat(row['第4年佣金']) || 0,
+                    year5: parseFloat(row['第5年佣金']) || 0,
+                    remark: row['备注'] || ''
+                });
+            });
+            
+            // 更新全局数据
+            productsData = newProductsData;
+        }
+        
+        // 显示成功提示
+        function showSuccessToast() {
+            const toast = document.getElementById('successToast');
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+        
+        // 重新初始化界面
+        function reinitializeUI() {
+            // 清空并重新初始化下拉框
+            $('#company').empty().append($('<option>', { value: "", text: "请选择保险公司" }));
+            $('#product').empty().append($('<option>', { value: "", text: "请先选择保险公司" }));
+            
+            initSelects();
+            
+            // 显示更新后的产品列表
+            showAllProducts();
+            
+            // 隐藏结果区域
+            document.getElementById('resultsSection').classList.add('hidden');
+        }
+        
+        // 显示所有产品
+        function showAllProducts() {
+            const sampleTableBody = document.getElementById('sampleTableBody');
+            sampleTableBody.innerHTML = '';
+            
+            // 按公司分组显示产品
+            const companies = Object.keys(productsData).sort();
+            
+            if (companies.length === 0) {
+                const emptyRow = document.createElement('tr');
+                emptyRow.innerHTML = `
+                    <td colspan="3" class="px-2 py-4 text-center text-sm text-gray-500">
+                        暂无数据，请上传Excel文件更新数据
+                    </td>
+                `;
+                sampleTableBody.appendChild(emptyRow);
+                return;
+            }
+            
+            companies.forEach(company => {
+                // 按产品名称去重
+                const products = {};
+                productsData[company].forEach(item => {
+                    if (!products[item.product_name]) {
+                        products[item.product_name] = {
+                            code: item.product_code,
+                            terms: []
+                        };
+                    }
+                    if (!products[item.product_name].terms.includes(item.payment_term)) {
+                        products[item.product_name].terms.push(item.payment_term);
+                    }
+                });
+                
+                // 添加公司分组标题
+                const companyRow = document.createElement('tr');
+                companyRow.innerHTML = `
+                    <td colspan="3" class="px-2 py-2 bg-gray-50 text-sm font-medium text-gray-700">
+                        ${company}
+                    </td>
+                `;
+                sampleTableBody.appendChild(companyRow);
+                
+                // 添加该公司的产品
+                Object.keys(products).sort().forEach(productName => {
+                    const product = products[productName];
+                    const row = document.createElement('tr');
+                    row.className = 'cursor-pointer hover:bg-gray-50 transition-colors duration-150';
+                    row.innerHTML = `
+                        <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-500">
+                            <i class="fas fa-caret-right text-blue-400 mr-1"></i>
+                        </td>
+                        <td class="px-2 py-2 text-sm text-gray-900 max-w-xs truncate" title="${productName}">${productName}</td>
+                        <td class="px-2 py-2 whitespace-nowrap text-sm text-gray-500">
+                            ${product.terms.length}个缴费期选项
+                        </td>
+                    `;
+                    
+                    // 点击产品行显示详情
+                    row.addEventListener('click', () => {
+                        $('#company').val(company).trigger('change');
+                        setTimeout(() => {
+                            $('#product').val(productName).trigger('change');
+                            setTimeout(performSearch, 100);
+                        }, 100);
+                    });
+                    
+                    sampleTableBody.appendChild(row);
+                });
+            });
+        }
+        
+        // 执行搜索
+        function performSearch() {
+            const company = $('#company').val();
+            const productName = $('#product').val();
+            
+            if (!company || !productName) {
+                alert('请同时选择保险公司和产品名称');
+                return;
+            }
+            
+            // 显示加载状态
+            showLoading();
+            
+            // 模拟搜索延迟
+            setTimeout(() => {
+                // 查找匹配的产品
+                const results = productsData[company] ? 
+                    productsData[company].filter(product => product.product_name === productName) : [];
+                
+                // 处理搜索结果
+                handleSearchResults(company, productName, results);
+            }, 300);
+        }
+        
+        // 处理搜索结果
+        function handleSearchResults(company, productName, results) {
+            const resultsSection = document.getElementById('resultsSection');
+            const noResultSection = document.getElementById('noResultSection');
+            const sampleDataSection = document.getElementById('sampleDataSection');
+            
+            if (results.length === 0) {
+                // 无结果
+                resultsSection.classList.add('hidden');
+                noResultSection.classList.remove('hidden');
+                sampleDataSection.classList.add('hidden');
+            } else {
+                // 显示产品详情
+                resultsSection.classList.remove('hidden');
+                noResultSection.classList.add('hidden');
+                sampleDataSection.classList.add('hidden');
+                
+                displayProductDetails(company, productName, results);
+            }
+        }
+        
+        // 显示产品详情
+        function displayProductDetails(company, productName, products) {
+            // 填充产品信息
+            document.getElementById('productTitle').textContent = productName;
+            document.getElementById('productCode').textContent = products[0].product_code;
+            document.getElementById('companyName').textContent = company;
+            
+            // 填充费率表格
+            const rateTableBody = document.getElementById('rateTableBody');
+            rateTableBody.innerHTML = '';
+            
+            // 按缴费期排序
+            const sortedProducts = [...products].sort((a, b) => parseInt(a.payment_term) - parseInt(b.payment_term));
+            
+            sortedProducts.forEach(product => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${product.payment_term}年</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">${(product.fyc * 100).toFixed(1)}%</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">${(product.fyd * 100).toFixed(1)}%</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-semibold text-blue-600">${(product.total_new * 100).toFixed(1)}%</td>
+                `;
+                rateTableBody.appendChild(row);
+            });
+            
+            // 填充后续年度佣金表格
+            const yearlyTableBody = document.getElementById('yearlyTableBody');
+            yearlyTableBody.innerHTML = '';
+            
+            sortedProducts.forEach(product => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${product.payment_term}年</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">${(product.year2 * 100).toFixed(1)}%</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">${(product.year3 * 100).toFixed(1)}%</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">${(product.year4 * 100).toFixed(1)}%</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">${(product.year5 * 100).toFixed(1)}%</td>
+                `;
+                yearlyTableBody.appendChild(row);
+            });
+            
+            // 创建趋势图
+            createRateChart(sortedProducts);
+        }
+        
+        // 创建费率趋势图
+        function createRateChart(products) {
+            const ctx = document.getElementById('rateChart').getContext('2d');
+            
+            // 准备图表数据
+            const labels = products.map(p => `${p.payment_term}年`);
+            const fycData = products.map(p => (p.fyc * 100).toFixed(1));
+            const fydData = products.map(p => (p.fyd * 100).toFixed(1));
+            const totalData = products.map(p => (p.total_new * 100).toFixed(1));
+            
+            // 销毁旧图表
+            if (window.rateChart) {
+                window.rateChart.destroy();
+            }
+            
+            // 创建新图表
+            window.rateChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '首期佣金(FYC)',
+                            data: fycData,
+                            backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: '新单开拓奖(FYD)',
+                            data: fydData,
+                            backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                            borderColor: 'rgba(16, 185, 129, 1)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: '新单收入合计',
+                            data: totalData,
+                            backgroundColor: 'rgba(245, 158, 11, 0.7)',
+                            borderColor: 'rgba(245, 158, 11, 1)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: '费率 (%)'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: '缴费期'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 显示加载状态
+        function showLoading() {
+            const searchBtn = document.getElementById('searchBtn');
+            const originalText = searchBtn.innerHTML;
+            
+            searchBtn.disabled = true;
+            searchBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>查询中...';
+            
+            setTimeout(() => {
+                searchBtn.disabled = false;
+                searchBtn.innerHTML = originalText;
+            }, 300);
+        }
+    </script>
+</body>
+</html>
+    
